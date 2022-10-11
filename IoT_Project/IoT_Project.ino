@@ -1,5 +1,7 @@
 
-#include <Wire.h>
+//#include "semphr.h" //Sempahore library for freertos
+
+
 
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
@@ -7,12 +9,13 @@
 #define ARDUINO_RUNNING_CORE 1
 #endif
 
-//Definitions 
+////////////// Definitions ////////////////////////////////////
 
 #define LDR_PIN  15
 #define T_Sensor_PIN 16
 #define RELE_PIN 18
 #define PH_SENSOR_PIN 14
+#define SERVO_PIN 19
 
 //I2C pins
 #define SDA_PIN 21
@@ -22,28 +25,33 @@
 #define ADC_mV 3300
 #define ADC_Res 4096
 
-
-
 #define  sensors_buffer_size  3 //buffer size for sensors to be stored
 #define  LDR_buffer_position 0
 #define  Temperature_buffer_position 1
 
-//////////////End of definitions
 
 
-// define two tasks for Blink & AnalogRead
+
+////////////////////// Tasks /////////////////////////
 void Task_LDR_Read( void *pvParameters );
 void Task_Serial_Print( void *pvParameters );
 void Task_Read_Temperature( void *pvParameters );
 void Task_Rele( void *pvParameters );
 void Task_pH( void *pvParameters );
-void Task_move_servo( void *pvParameters );
+void Task_feed_fish( void *pvParameters );
 
+
+///////////////////// Global Variables //////////////////////////////////
 volatile static char Global_variable_buffer[sensors_buffer_size] = {0};
+SemaphoreHandle_t rele_semaphore = NULL;     // Waits for parameter to be read
+SemaphoreHandle_t feed_fish = NULL;
+
 
 void setup() {
-  //I2C library init
-  Wire.begin(SDA_PIN, SCL_PIN, SLAVE_ADDR);
+  //make a semaphore for signal to activate a relé or feed the fish
+  rele_semaphore = xSemaphoreCreateBinary();
+  feed_fish = xSemaphoreCreateBinary();
+  
   // initialize serial communication at 115200 bits per second:
   Serial.begin(115200);
 
@@ -91,6 +99,17 @@ void setup() {
   xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
               Task_pH,  // Function to be called
               "Read ph",   // Name of task
+              2048,         // Stack size (bytes in ESP32, words in FreeRTOS)
+              NULL,         // Parameter to pass to function
+              1,            // Task priority (0 to configMAX_PRIORITIES - 1)
+              NULL,         // Task handle
+              ARDUINO_RUNNING_CORE);     // Run on one core for demo purposes (ESP32 only)
+              
+
+  // Task to run forever
+  xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
+              Task_feed_fish,  // Function to be called
+              "Feed the fish in the tank",   // Name of task
               2048,         // Stack size (bytes in ESP32, words in FreeRTOS)
               NULL,         // Parameter to pass to function
               1,            // Task priority (0 to configMAX_PRIORITIES - 1)
@@ -174,10 +193,33 @@ void Task_Rele( void *pvParameters )
     pinMode(RELE_PIN, OUTPUT);
     for (;;)
   {
-
-    digitalWrite(RELE_PIN, HIGH);   // turn the Rele on (HIGH is the voltage level)
+    if (NULL != rele_semaphore)
+    {
+      if( pdTRUE == xSemaphoreTake( rele_semaphore, ( TickType_t ) 10 )) //check the semaphor to take it or wait n ticks to see if it becomes available
+      {
+          digitalWrite(RELE_PIN, HIGH);   // turn the Rele on (HIGH is the voltage level)
+          vTaskDelay(100);  // one tick delay (15ms) in between reads for stability
+          digitalWrite(RELE_PIN, LOW);    // turn the Rele off by making the voltage LOW
+      }
+    }
     vTaskDelay(100);  // one tick delay (15ms) in between reads for stability
-    digitalWrite(RELE_PIN, LOW);    // turn the Rele off by making the voltage LOW
+  }
+}
+
+void Task_feed_fish( void *pvParameters )
+{
+    //initialize pwm pin for servo
+    
+    
+    for (;;)
+  {
+    if (NULL != feed_fish)
+    {
+      if( pdTRUE == xSemaphoreTake( feed_fish, ( TickType_t ) 10 )) //check the semaphor to take it or wait n ticks to see if it becomes available
+      {
+        //take actions to feed fish 
+      }
+    }
     vTaskDelay(100);  // one tick delay (15ms) in between reads for stability
   }
 }
@@ -196,6 +238,8 @@ void Task_pH( void *pvParameters )
     // read the input on analog pin LDR_PIN:
     int pH_a_read_value = analogRead(PH_SENSOR_PIN);
     //Process data 
+    int temperature = 0, averageVoltage = 0;
+    
     float pH_voltage =  pH_a_read_value *3.3 /ADC_Res;
     float compensationCoefficient = 1.0 + 0.02 * (temperature - 25.0);
     float compensationVolatge = averageVoltage / compensationCoefficient; //temperature compensation
@@ -204,13 +248,14 @@ void Task_pH( void *pvParameters )
     //store data
     
     // print the temperature in the Serial Monitor:
-    Serial.print("Temperature: ");
-    Serial.print(Temp);   // print the temperature in °C
-    Serial.println("°C");
+    Serial.print("Ph: ");
+    Serial.print(ph);   // print the temperature in °C
+    Serial.println("end");
     
     vTaskDelay(10);  // one tick delay (15ms) in between reads for stability
   }
 }
+
 
 void Task_Serial_Print( void *pvParameters )
 {
