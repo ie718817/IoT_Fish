@@ -1,7 +1,5 @@
-
+#include <Servo.h>
 //#include "semphr.h" //Sempahore library for freertos
-
-
 
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
@@ -209,8 +207,9 @@ void Task_Rele( void *pvParameters )
 void Task_feed_fish( void *pvParameters )
 {
     //initialize pwm pin for servo
-    
-    
+    static Servo myservo;
+    static int pos = 0;    // variable to store the servo position
+    myservo.attach(SERVO_PIN);
     for (;;)
   {
     if (NULL != feed_fish)
@@ -218,6 +217,7 @@ void Task_feed_fish( void *pvParameters )
       if( pdTRUE == xSemaphoreTake( feed_fish, ( TickType_t ) 10 )) //check the semaphor to take it or wait n ticks to see if it becomes available
       {
         //take actions to feed fish 
+        myservo.write(pos); 
       }
     }
     vTaskDelay(100);  // one tick delay (15ms) in between reads for stability
@@ -255,7 +255,6 @@ void Task_pH( void *pvParameters )
     vTaskDelay(10);  // one tick delay (15ms) in between reads for stability
   }
 }
-
 
 void Task_Serial_Print( void *pvParameters )
 {
